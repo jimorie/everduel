@@ -4,6 +4,7 @@ import typing as t
 import weakref
 
 import aiosqlite
+import sqlite3
 
 
 ID_KEY = "_id"
@@ -40,19 +41,17 @@ class Database:
     async def execute(self, sql: str, **params) -> aiosqlite.cursor.Cursor:
         return await self.db.execute(sql, params)
 
-    async def fetchall(self, sql: str, **params) -> t.Any:
+    async def fetchall(self, sql: str, **params) -> t.AsyncIterator[sqlite3.Row]:
         cursor = await self.execute(sql, **params)
-        for row in cursor:
+        async for row in cursor:
             yield row
-        cursor.close()
+        await cursor.close()
 
-    async def fetchone(self, sql: str, **params) -> t.Any:
+    async def fetchone(self, sql: str, **params) -> sqlite3.Row:
         cursor = await self.execute(sql, **params)
-        for row in cursor.fetchall():
-            yield row
-        cursor.close()
-        async with self.execute(sql, **params) as cursor:
-            return await cursor.fetchone()
+        row = await cursor.fetchone()
+        await cursor.close()
+        return row
 
 
 class ThingDatabase(Database):
@@ -60,7 +59,7 @@ class ThingDatabase(Database):
 
     def __init__(self, db: aiosqlite.Connection, tablename: str):
         super(ThingDatabase, self).__init__(db)
-        self._loadsql = f"SELECT type, data FROM {tablename} WHERE id = :id"
+        self._loadsql = f"SELECT version, type, data FROM {tablename} WHERE id = :id"
         self._deletesql = f"DELETE FROM {tablename} WHERE id = :id"
         self._createsql = (
             f"INSERT INTO {tablename} (version, type, data) "
@@ -100,13 +99,13 @@ class ThingDatabase(Database):
     async def update(self, thing_id: int, data: dict) -> aiosqlite.cursor.Cursor:
         cursor = await self.execute(self._updatesql, id=thing_id, data=json.dumps(data))
         await self.commit()
-        cursor.close()
+        await cursor.close()
         return cursor
 
     async def delete(self, thing_id: int) -> aiosqlite.cursor.Cursor:
         cursor = self.execute(self._deletesql, id=thing_id)
         await self.commit()
-        cursor.close()
+        await cursor.close()
         return cursor
 
     async def load(self, thing_id: int) -> "BaseThing":
@@ -119,9 +118,18 @@ class ThingDatabase(Database):
             # TODO: Migration
             pass
         thing = thing_cls(self, data=data, thing_id=thing_id)
-        thing.load_root_props()
+        await thing.load_root_props()
         self._cache[thing_id] = thing
         return thing
+
+    async def save(self, thing: "BaseThing") -> int:
+        thing_id = thing._id
+        if thing_id:
+            await self.update(thing_id, thing._data)
+        else:
+            thing_id = await self.create(thing._type, thing._data)
+            self._cache[thing_id] = thing
+        return thing_id
 
 
 class BaseThing:
@@ -138,7 +146,7 @@ class BaseThing:
         self._data = data or {}
         self._id = thing_id
         self._cache = {}
-        if TYPE_KEY not in self._data:
+        if not self._id and TYPE_KEY not in self._data:
             self._data[TYPE_KEY] = self._type
 
     async def load_root_props(self, visited=None):
@@ -155,10 +163,7 @@ class BaseThing:
                     self._cache[k].load_props()
 
     async def save(self) -> int:
-        if self._id:
-            await self._db.update(self._id, self._data)
-        else:
-            self._id = await self._db.create(self._type, self._data)
+        self._id = await self._db.save(self)
         return self._id
 
     async def delete(self) -> t.Optional[aiosqlite.cursor.Cursor]:
@@ -169,13 +174,6 @@ class BaseThing:
 
     def clear(self):
         self._data = {}
-
-    def serialize(self):
-        if self._id:
-            return json.dumps({ID_KEY: self._id})
-        if self._root:
-            raise RuntimeError("missing id attribute on root object")
-        return json.dumps(self._data)
 
 
 class Property:
@@ -228,8 +226,12 @@ class CachedProperty(Property):
         if not isinstance(value, BaseThing):
             raise ValueError(f"{self.name} must be of type BaseThing")
         instance._cache[self.name] = self.typecheck(value)
-        if self.volatile is False:
-            instance._data[self.name] = value.serialize()
+        if not self.volatile:
+            if self._id:
+                instance._data[self.name] = {ID_KEY: value._id}
+            if self._root:
+                raise RuntimeError("missing id attribute on root object")
+            instance._data[self.name] = value._data
 
     def __delete__(self, instance: BaseThing):
         super(CachedProperty, self).__delete__(instance)
