@@ -12,13 +12,13 @@ pytestmark = pytest.mark.asyncio
 
 
 @ed.register_type("test-t")
-class TestThing(ed.BaseThing):
+class MyThing(ed.BaseThing):
     name = ed.prop()
     price = ed.prop(typecheck=int)
 
 
 @ed.register_type("test-p")
-class TestPlayer(TestThing):
+class MyPlayer(MyThing):
     _root = True
     thing = ed.thing()
     buddy = ed.thing(typecheck="test-p")
@@ -36,7 +36,7 @@ async def thingdb():
 
 
 async def test_save_thing(thingdb):
-    thing = TestThing(thingdb)
+    thing = MyThing(thingdb)
     thing.name = "Kaka"
     thing_id = await thing.save()
     r_id, r_version, r_type, r_data = await thingdb.fetchone(
@@ -53,7 +53,7 @@ async def test_save_thing(thingdb):
 async def test_load_thing(thingdb):
     thing_id = await test_save_thing(thingdb)
     thing = await thingdb.load(thing_id)
-    assert type(thing) is TestThing
+    assert type(thing) is MyThing
     assert thing.name == "Kaka"
     return thing
 
@@ -65,7 +65,7 @@ async def test_update_thing(thingdb):
     r_data, = await thingdb.fetchone(
         f"SELECT data FROM {TEST_DB_TABLE}"
     )
-    assert json.loads(r_data) == {"_type": TestThing._type, "name": "Bulle"}
+    assert json.loads(r_data) == {"_type": MyThing._type, "name": "Bulle"}
 
 
 async def test_weakref_cache(thingdb):
@@ -87,10 +87,10 @@ async def test_weakref_cache(thingdb):
 
 
 async def test_save_player(thingdb):
-    player = TestPlayer(thingdb)
+    player = MyPlayer(thingdb)
     player.name = "Alice"
     assert player._data == {
-        "_type": TestPlayer._type,
+        "_type": MyPlayer._type,
         "name": "Alice",
     }
     player_id = await player.save()
@@ -102,14 +102,19 @@ async def test_save_player(thingdb):
     assert r_version == thingdb.version
     assert r_type == player._type
     assert json.loads(r_data) == player._data
-    thing = await test_load_thing(thingdb)
-    player.held = thing
-    import pdb; pdb.set_trace()
+    thing = MyThing(thingdb)
+    thing.name = "Bulle"
+    player.thing = thing
     assert player._data == {
-        "_type": TestPlayer._type,
+        "_type": MyPlayer._type,
         "name": "Alice",
-        "held": {"_id": thing._id},
+        "thing": {"_type": "test-t", "name": "Bulle"},
     }
-
+    await thing.save()
+    assert player._data == {
+        "_type": MyPlayer._type,
+        "name": "Alice",
+        "thing": {"_id": thing._id},
+    }
     return player_id
 

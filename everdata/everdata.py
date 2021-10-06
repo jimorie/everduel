@@ -1,10 +1,10 @@
+import aiosqlite
 import json
 import pathlib
+import sqlite3
 import typing as t
 import weakref
-
-import aiosqlite
-import sqlite3
+import wrapt
 
 
 ID_KEY = "_id"
@@ -144,6 +144,7 @@ class BaseThing:
     ):
         self._db = db
         self._data = data or {}
+        self._parentview = wrapt.ObjectProxy(self._data)
         self._id = thing_id
         self._cache = {}
         if not self._id and TYPE_KEY not in self._data:
@@ -162,18 +163,26 @@ class BaseThing:
                 else:
                     self._cache[k].load_props()
 
+    def update_parentview(self):
+        if self._id and self._parentview.__wrapped__ is self._data:
+            self._parentview.__wrapped__ = {ID_KEY: self._id}
+        elif not self._id and self._parentview.__wrapped__ is not self._data:
+            self._parentview.__wrapped__ = self._data
+
     async def save(self) -> int:
         self._id = await self._db.save(self)
+        self.update_parentview()
         return self._id
 
-    async def delete(self) -> t.Optional[aiosqlite.cursor.Cursor]:
-        self.clear()
+    async def delete(self):
         if self._id:
-            return await self._db.delete(self._id)
-        return None
+            await self._db.delete(self._id)
+            self._id = None
+            self.update_parentview()
 
     def clear(self):
-        self._data = {}
+        self._data.clear()
+        self._cache.clear()
 
 
 class Property:
@@ -221,17 +230,14 @@ class CachedProperty(Property):
 
     def __set__(self, instance: BaseThing, value: t.Optional[BaseThing]):
         if value is None:
-            self.__delete(instance)
-            return
+            return self.__delete__(instance)
         if not isinstance(value, BaseThing):
             raise ValueError(f"{self.name} must be of type BaseThing")
         instance._cache[self.name] = self.typecheck(value)
         if not self.volatile:
-            if self._id:
-                instance._data[self.name] = {ID_KEY: value._id}
-            if self._root:
+            if value._root and not value._id:
                 raise RuntimeError("missing id attribute on root object")
-            instance._data[self.name] = value._data
+            instance._data[self.name] = value._parentview
 
     def __delete__(self, instance: BaseThing):
         super(CachedProperty, self).__delete__(instance)
