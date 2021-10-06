@@ -19,7 +19,6 @@ class MyThing(ed.BaseThing):
 
 @ed.register_type("test-p")
 class MyPlayer(MyThing):
-    _root = True
     thing = ed.thing()
     buddy = ed.thing(typecheck="test-p")
 
@@ -46,7 +45,7 @@ async def test_save_thing(thingdb):
     assert r_id == thing_id
     assert r_version == thingdb.version
     assert r_type == thing._type
-    assert json.loads(r_data) == thing._data
+    assert json.loads(r_data) == {"name": "Kaka"}
     return thing_id
 
 
@@ -65,7 +64,7 @@ async def test_update_thing(thingdb):
     r_data, = await thingdb.fetchone(
         f"SELECT data FROM {TEST_DB_TABLE}"
     )
-    assert json.loads(r_data) == {"_type": MyThing._type, "name": "Bulle"}
+    assert json.loads(r_data) == {"name": "Bulle"}
 
 
 async def test_weakref_cache(thingdb):
@@ -89,9 +88,7 @@ async def test_weakref_cache(thingdb):
 async def test_save_player(thingdb):
     player = MyPlayer(thingdb)
     player.name = "Alice"
-    assert player._data == {
-        "_type": MyPlayer._type,
-        "name": "Alice",
+    assert player._data == {"name": "Alice",
     }
     player_id = await player.save()
     r_id, r_version, r_type, r_data = await thingdb.fetchone(
@@ -101,20 +98,69 @@ async def test_save_player(thingdb):
     assert r_id == player_id
     assert r_version == thingdb.version
     assert r_type == player._type
-    assert json.loads(r_data) == player._data
+    assert json.loads(r_data) == {"name": "Alice"}
+    return player_id
+
+
+async def test_load_player(thingdb):
+    player_id = await test_save_player(thingdb)
+    player = await thingdb.load(player_id)
+    assert type(player) is MyPlayer
+    assert player.name == "Alice"
+    return player
+
+
+async def test_save_player_thing_inline(thingdb):
+    player = await test_load_player(thingdb)
     thing = MyThing(thingdb)
     thing.name = "Bulle"
     player.thing = thing
-    assert player._data == {
-        "_type": MyPlayer._type,
+    await player.save()
+    r_data, = await thingdb.fetchone(
+        f"SELECT data FROM {TEST_DB_TABLE} WHERE id = :id",
+        id=player._id,
+    )
+    assert json.loads(r_data) == {
         "name": "Alice",
-        "thing": {"_type": "test-t", "name": "Bulle"},
+        "thing": {
+            "_type": thing._type,
+            "name": "Bulle",
+        },
     }
-    await thing.save()
-    assert player._data == {
-        "_type": MyPlayer._type,
-        "name": "Alice",
-        "thing": {"_id": thing._id},
-    }
-    return player_id
+    return player._id
 
+
+async def test_load_player_thing_inline(thingdb):
+    player_id = await test_save_player_thing_inline(thingdb)
+    player = await thingdb.load(player_id)
+    assert type(player.thing) is MyThing
+    assert player.thing.name == "Bulle"
+    return player
+
+
+async def test_save_player_thing_reference(thingdb):
+    player = await test_load_player_thing_inline(thingdb)
+    await player.thing.save()
+    await player.save()
+    r_data, = await thingdb.fetchone(
+        f"SELECT data FROM {TEST_DB_TABLE} WHERE id = :id",
+        id=player._id,
+    )
+    assert json.loads(r_data) == {
+        "name": "Alice",
+        "thing": {
+            "_id": player.thing._id,
+        },
+    }
+    return player._id
+
+
+async def test_load_player_thing_reference(thingdb):
+    player_id = await test_save_player_thing_reference(thingdb)
+    assert player_id not in thingdb._cache
+    player = await thingdb.load(player_id)
+    assert player_id in thingdb._cache
+    assert player.thing._id in thingdb._cache
+    assert type(player.thing) is MyThing
+    assert player.thing.name == "Bulle"
+    return player

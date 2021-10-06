@@ -4,7 +4,6 @@ import pathlib
 import sqlite3
 import typing as t
 import weakref
-import wrapt
 
 
 ID_KEY = "_id"
@@ -22,6 +21,17 @@ def register_type(thing_type: str) -> t.Callable:
         return thing_cls
 
     return decorator
+
+
+class ThingEncoder(json.JSONEncoder):
+    def default(self, thing):
+        if isinstance(thing, BaseThing):
+            if thing._id:
+                return {ID_KEY: thing._id}
+            if TYPE_KEY not in thing._data:
+                thing._data[TYPE_KEY] = thing._type
+            return thing._data
+        return thing
 
 
 class Database:
@@ -67,6 +77,7 @@ class ThingDatabase(Database):
         )
         self._updatesql = f"UPDATE {tablename} SET data = :data WHERE id = :id"
         self._cache = weakref.WeakValueDictionary()
+        self._encoder = ThingEncoder()
 
     @classmethod
     async def connect(cls, dbpath: t.Union[str, pathlib.Path], tablename: str):
@@ -91,13 +102,15 @@ class ThingDatabase(Database):
             self._createsql,
             version=self.version,
             type=thing_type,
-            data=json.dumps(data),
+            data=self._encoder.encode(data),
         )
         await self.commit()
         return cursor.lastrowid
 
     async def update(self, thing_id: int, data: dict) -> aiosqlite.cursor.Cursor:
-        cursor = await self.execute(self._updatesql, id=thing_id, data=json.dumps(data))
+        cursor = await self.execute(
+            self._updatesql, id=thing_id, data=self._encoder.encode(data)
+        )
         await self.commit()
         await cursor.close()
         return cursor
@@ -108,19 +121,39 @@ class ThingDatabase(Database):
         await cursor.close()
         return cursor
 
-    async def load(self, thing_id: int) -> "BaseThing":
+    async def load(self, thing_id: int, visited=None) -> "BaseThing":
         if thing_id in self._cache:
             return self._cache[thing_id]
         version, thing_type, data = await self.fetchone(self._loadsql, id=thing_id)
-        thing_cls = registered_types.get(thing_type)
         data = json.loads(data)
         if version != self.version:
             # TODO: Migration
             pass
-        thing = thing_cls(self, data=data, thing_id=thing_id)
-        await thing.load_root_props()
+        thing = await self.from_data(data, thing_type, visited)
+        thing._id = thing_id
         self._cache[thing_id] = thing
         return thing
+
+    async def from_data(self, data: dict, thing_type=None, visited=None):
+        if thing_type is None:
+            thing_type = data[TYPE_KEY]
+        thing_cls = registered_types.get(thing_type)
+        thing = thing_cls(self, data=data)
+        await self.load_props(thing, visited)
+        return thing
+
+    async def load_props(self, thing, visited=None):
+        if visited is None:
+            visited = set()
+        elif thing in visited:
+            return
+        visited.add(thing)
+        for k, v in thing._data.items():
+            if type(v) is dict:
+                if ID_KEY in v:
+                    thing._data[k] = await self.load(v[ID_KEY])
+                elif TYPE_KEY in v:
+                    thing._data[k] = await self.from_data(v)
 
     async def save(self, thing: "BaseThing") -> int:
         thing_id = thing._id
@@ -133,7 +166,6 @@ class ThingDatabase(Database):
 
 
 class BaseThing:
-    _root = False
     _type = "X"
 
     def __init__(
@@ -144,51 +176,26 @@ class BaseThing:
     ):
         self._db = db
         self._data = data or {}
-        self._parentview = wrapt.ObjectProxy(self._data)
         self._id = thing_id
-        self._cache = {}
-        if not self._id and TYPE_KEY not in self._data:
-            self._data[TYPE_KEY] = self._type
-
-    async def load_root_props(self, visited=None):
-        if visited is None:
-            visited = set()
-        elif self._id in visited:
-            return
-        visited.add(self._id)
-        for k, v in self._data.items():
-            if type(v) is dict:
-                if ID_KEY in v:
-                    self._cache[k] = await self._db.load(v[ID_KEY])
-                else:
-                    self._cache[k].load_props()
-
-    def update_parentview(self):
-        if self._id and self._parentview.__wrapped__ is self._data:
-            self._parentview.__wrapped__ = {ID_KEY: self._id}
-        elif not self._id and self._parentview.__wrapped__ is not self._data:
-            self._parentview.__wrapped__ = self._data
 
     async def save(self) -> int:
         self._id = await self._db.save(self)
-        self.update_parentview()
         return self._id
 
     async def delete(self):
         if self._id:
             await self._db.delete(self._id)
             self._id = None
-            self.update_parentview()
 
     def clear(self):
         self._data.clear()
-        self._cache.clear()
 
 
 class Property:
-    def __init__(self, default: t.Any = None, typecheck: type = None):
+    def __init__(self, default: t.Any = None, typecheck: type = None, volatile: bool = False):
         self.default = default
         self._type = typecheck
+        self.volatile = volatile  # TODO: Implement :)
 
     def __set_name__(self, owner: type, name: str):
         self.name = name
@@ -218,43 +225,8 @@ class Property:
 prop = Property
 
 
-class CachedProperty(Property):
-    def __init__(self, volatile: bool = False, default: t.Any = None, **kwargs):
-        self.volatile = volatile
-        super(CachedProperty, self).__init__(**kwargs)
-
-    def __get__(self, instance: BaseThing, owner: type = None) -> t.Any:
-        if self.name not in instance._cache and self.name in instance._data:
-            instance._cache[self.name] = self.value(instance)
-        return instance._cache.get(self.name)
-
-    def __set__(self, instance: BaseThing, value: t.Optional[BaseThing]):
-        if value is None:
-            return self.__delete__(instance)
-        if not isinstance(value, BaseThing):
-            raise ValueError(f"{self.name} must be of type BaseThing")
-        instance._cache[self.name] = self.typecheck(value)
-        if not self.volatile:
-            if value._root and not value._id:
-                raise RuntimeError("missing id attribute on root object")
-            instance._data[self.name] = value._parentview
-
-    def __delete__(self, instance: BaseThing):
-        super(CachedProperty, self).__delete__(instance)
-        try:
-            del instance._cache[self.name]
-        except KeyError:
-            pass
-
-    def value(self, instance: BaseThing) -> t.Any:
-        raise NotImplementedError()
-
-
-class ThingProperty(CachedProperty):
-    def value(self, instance: BaseThing) -> t.Any:
-        data = instance._data[self.name]
-        thing_cls = registered_types[data[TYPE_KEY]]
-        return thing_cls(instance._db, data)
+class ThingProperty(Property):
+    pass
 
 
 thing = ThingProperty
@@ -300,14 +272,11 @@ class ThingList(list):
         raise NotImplementedError()
 
 
-class ThingListProperty(CachedProperty):
+class ThingListProperty(Property):
     def __init__(self, default: t.Any = None):
         if default is None:
             default = []
         super(ThingListProperty, self).__init__(default=default)
-
-    def value(self, instance: BaseThing) -> t.Any:
-        return ThingList(instance._db, instance._data.get(self.name, self.default))
 
 
 thinglist = ThingListProperty
@@ -325,9 +294,8 @@ class Weapon(Thing):
 
 @register_type("P")
 class Player(Thing):
-    _root = True
     race = thing()
     weapon = thing(typecheck=Weapon)
-    target = thing(typecheck="P", volatile=True)
+    target = thing(typecheck="P")
     buddy = thing(typecheck="P")
     inventory = thinglist()
