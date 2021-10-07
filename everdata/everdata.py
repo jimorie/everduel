@@ -28,6 +28,8 @@ class ThingEncoder(json.JSONEncoder):
         if isinstance(thing, BaseThing):
             if thing._id:
                 return {ID_KEY: thing._id}
+            if ID_KEY in thing._data:
+                raise ValueError(f"refuse to save thing with {ID_KEY} in its data")
             if TYPE_KEY not in thing._data:
                 thing._data[TYPE_KEY] = thing._type
             return thing._data
@@ -139,21 +141,8 @@ class ThingDatabase(Database):
             thing_type = data[TYPE_KEY]
         thing_cls = registered_types.get(thing_type)
         thing = thing_cls(self, data=data)
-        await self.load_props(thing, visited)
+        await thing.load_props(visited)
         return thing
-
-    async def load_props(self, thing, visited=None):
-        if visited is None:
-            visited = set()
-        elif thing in visited:
-            return
-        visited.add(thing)
-        for k, v in thing._data.items():
-            if type(v) is dict:
-                if ID_KEY in v:
-                    thing._data[k] = await self.load(v[ID_KEY])
-                elif TYPE_KEY in v:
-                    thing._data[k] = await self.from_data(v)
 
     async def save(self, thing: "BaseThing") -> int:
         thing_id = thing._id
@@ -190,9 +179,34 @@ class BaseThing:
     def clear(self):
         self._data.clear()
 
+    async def load_props(self, visited=None):
+        if visited is None:
+            visited = set()
+        elif self in visited:
+            return
+        visited.add(self)
+        for k, v in self._data.items():
+            if type(v) is dict:
+                if ID_KEY in v:
+                    self._data[k] = await self._db.load(v[ID_KEY], visited=visited)
+                elif TYPE_KEY in v:
+                    self._data[k] = await self._db.from_data(v, visited=visited)
+            elif type(v) is list:
+                for i in range(len(v)):
+                    if type(v[i]) is dict:
+                        if ID_KEY in v[i]:
+                            v[i] = await self._db.load(v[i][ID_KEY], visited=visited)
+                        elif TYPE_KEY in v[i]:
+                            v[i] = await self._db.from_data(v[i], visited=visited)
+
 
 class Property:
-    def __init__(self, default: t.Any = None, typecheck: type = None, volatile: bool = False):
+    def __init__(
+        self,
+        default: t.Any = None,
+        typecheck: type = None,
+        volatile: bool = False,
+    ):
         self.default = default
         self._type = typecheck
         self.volatile = volatile  # TODO: Implement :)
@@ -201,7 +215,14 @@ class Property:
         self.name = name
 
     def __get__(self, instance: BaseThing, owner: type = None) -> t.Any:
-        return instance._data.get(self.name, self.default)
+        if self.name not in instance._data:
+            if self.default is None:
+                return None
+            if isinstance(self.default, type):
+                instance._data[self.name] = self.default()
+            else:
+                instance._data[self.name] = self.default
+        return instance._data[self.name]
 
     def __set__(self, instance: BaseThing, value: t.Any):
         instance._data[self.name] = self.typecheck(value)
@@ -225,63 +246,6 @@ class Property:
 prop = Property
 
 
-class ThingProperty(Property):
-    pass
-
-
-thing = ThingProperty
-
-
-class ThingList(list):
-    def __init__(self, db: ThingDatabase, data: list):
-        self._data = data
-        super(list, self).__init__(
-            registered_types[item[TYPE_KEY]](item, db) for item in data
-        )
-
-    def append(self, x):
-        super(ThingList, self).append(x)
-        self._data.append(x._data)
-
-    def extend(self, iterable):
-        for x in iterable:
-            self.append(x)
-
-    def insert(self, i, x):
-        raise NotImplementedError()
-
-    def remove(self, x):
-        super(ThingList, self).remove(x)
-        for i, d in enumerate(self._data):
-            if d is x._data:
-                self._data.pop(i)
-                return
-        raise RuntimeError("ThingList out of sync")
-
-    def pop(self, i):
-        raise NotImplementedError()
-
-    def clear(self):
-        super(ThingList, self).clear()
-        self._data.clear()
-
-    def __add__(self, x):
-        raise NotImplementedError()
-
-    def __setitem__(self, i, x):
-        raise NotImplementedError()
-
-
-class ThingListProperty(Property):
-    def __init__(self, default: t.Any = None):
-        if default is None:
-            default = []
-        super(ThingListProperty, self).__init__(default=default)
-
-
-thinglist = ThingListProperty
-
-
 @register_type("T")
 class Thing(BaseThing):
     name = prop()
@@ -294,8 +258,8 @@ class Weapon(Thing):
 
 @register_type("P")
 class Player(Thing):
-    race = thing()
-    weapon = thing(typecheck=Weapon)
-    target = thing(typecheck="P")
-    buddy = thing(typecheck="P")
-    inventory = thinglist()
+    race = prop()
+    weapon = prop(typecheck=Weapon)
+    target = prop(typecheck="P")
+    buddy = prop(typecheck="P")
+    inventory = prop(default=list, typecheck=list)

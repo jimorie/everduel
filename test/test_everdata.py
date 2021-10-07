@@ -14,13 +14,14 @@ pytestmark = pytest.mark.asyncio
 @ed.register_type("test-t")
 class MyThing(ed.BaseThing):
     name = ed.prop()
-    price = ed.prop(typecheck=int)
+    price = ed.prop(default=10, typecheck=int)
 
 
 @ed.register_type("test-p")
 class MyPlayer(MyThing):
-    thing = ed.thing()
-    buddy = ed.thing(typecheck="test-p")
+    thing = ed.prop(typecheck=MyThing)
+    buddy = ed.prop(typecheck="test-p")
+    inventory = ed.prop(default=list, typecheck=list)
 
 
 @pytest.fixture
@@ -163,4 +164,82 @@ async def test_load_player_thing_reference(thingdb):
     assert player.thing._id in thingdb._cache
     assert type(player.thing) is MyThing
     assert player.thing.name == "Bulle"
+    return player
+
+
+async def test_default(thingdb):
+    thing = MyThing(thingdb)
+    assert thing.price == 10
+    player = MyPlayer(thingdb)
+    player.inventory.append(thing)
+    assert player.inventory == [thing]
+
+
+async def test_save_player_thing_inline_in_list(thingdb):
+    player = await test_load_player(thingdb)
+    thing = MyThing(thingdb)
+    thing.name = "Saft"
+    player.inventory.append(thing)
+    await player.save()
+    r_data, = await thingdb.fetchone(
+        f"SELECT data FROM {TEST_DB_TABLE} WHERE id = :id",
+        id=player._id,
+    )
+    assert json.loads(r_data) == {
+        "name": "Alice",
+        "inventory": [
+            {
+                "_type": thing._type,
+                "name": "Saft",
+            }
+        ],
+    }
+    return player._id
+
+
+async def test_load_player_thing_inline_in_list(thingdb):
+    player_id = await test_save_player_thing_inline_in_list(thingdb)
+    player = await thingdb.load(player_id)
+    assert len(player.inventory) == 1
+    assert type(player.inventory[0]) is MyThing
+    assert player.inventory[0].name == "Saft"
+    return player
+
+
+async def test_save_player_thing_reference_in_list(thingdb):
+    player = await test_load_player_thing_inline_in_list(thingdb)
+    thing2 = MyThing(thingdb)
+    thing2.name = "Bärs"
+    player.inventory.append(thing2)
+    await thing2.save()
+    await player.save()
+    r_data, = await thingdb.fetchone(
+        f"SELECT data FROM {TEST_DB_TABLE} WHERE id = :id",
+        id=player._id,
+    )
+    assert json.loads(r_data) == {
+        "name": "Alice",
+        "inventory": [
+            {
+                "_type": player.inventory[0]._type,
+                "name": "Saft",
+            },
+            {
+                "_id": thing2._id,
+            },
+        ],
+    }
+    return player._id
+
+
+async def test_load_player_thing_reference_in_list(thingdb):
+    player_id = await test_save_player_thing_reference_in_list(thingdb)
+    player = await thingdb.load(player_id)
+    assert len(player.inventory) == 2
+    assert type(player.inventory[0]) is MyThing
+    assert type(player.inventory[1]) is MyThing
+    assert player.inventory[0].name == "Saft"
+    assert player.inventory[1].name == "Bärs"
+    assert player.inventory[0]._id is None
+    assert player.inventory[1]._id is not None
     return player
