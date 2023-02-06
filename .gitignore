@@ -291,4 +291,4 @@ tags
 
 test.py
 test.db
-test/tmp*
+tmp-*

@@ -18,4 +18,4 @@ format:
 
 .PHONY: test
 test:
-	PYTHONPATH=. ${VENV}/bin/pytest test
+	PYTHONPATH=. ${VENV}/bin/pytest -vvv test

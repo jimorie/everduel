@@ -45,10 +45,17 @@ class MyUpgradedThing(pt.BaseThing):
         return data
 
 
-@pytest_asyncio.fixture(scope="function")
-async def thingsdb():
-    db = pt.ThingsDB(await pt.SqliteBackend.connect(TEST_DB, TEST_DB_TABLE))
-    # db = pt.ThingsDB(await pt.FileBackend.connect(TEST_TMP_DIR))
+@pytest_asyncio.fixture(
+    scope="function",
+    params=[
+        (pt.SqliteBackend, TEST_DB, TEST_DB_TABLE),
+        (pt.FileBackend, TEST_TMP_DIR),
+    ],
+    ids=["sqlite", "file"],
+)
+async def thingsdb(request):
+    backend_cls, *backend_args = request.param
+    db = pt.ThingsDB(await backend_cls.connect(*backend_args))
     try:
         await db.clear()
         yield db
