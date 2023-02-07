@@ -13,6 +13,10 @@
 * Each point of Skill increases your chance to score a critical hit by 1%. A critical hit deals 50% more damage and may trigger additional effects.
 * Each point of Skill increases damage you deal on a critical hit by 1%.
 
+#### Toughness
+
+* Each point of Toughness increases your health pool by 10.
+
 #### Cunning
 
 * Each point of Cunning increases the effectiveness of all conditions dealt by you by 2%.
@@ -26,10 +30,6 @@
 
 * Each point of Armor divides all direct damage taken with an additional 1%.
 * Each 2 points of Armor reduces the chance to receive a critical hit by 1%.
-
-#### Health
-
-* Each point of Health increases your damage threshold by 10.
 
 ### Stat Roles
 
@@ -128,6 +128,18 @@ Action: Deal moderate weapon damage to your target. Deal moderate bonus damage i
 
 Requirements: Your primary weapon is a hammer.
 
+#### Pause For Effect
+
+Action: Recover 1% of your health pool and gain Initiated for 1 round.
+
+Slots: 2
+
+#### Effect: Initiated
+
+Effect: You roll iniative with 1 less dice.
+
+Stacking: Increase duration.
+
 #### Body Slam
 
 Type: Melee Attack
@@ -138,59 +150,101 @@ Slots: 3
 
 #### True Grit
 
-Action: Recover 10% of your health.
+Action: Recover 10% of your health pool.
 
-Instinctive Reaction: Recover from being stunned when you become stunned. This can only be used 3 times per encounter.
+Effect: Recover from being stunned when you become stunned. This can only be used 3 times per encounter.
 
 Slots: 5
 
 ### Rogue
 
-#### Shadow Strike
+#### Effect: Stealth
+
+Effect: Evade attacks that targets you unless the attacker passes a Cunning vs. Cunning test against you.
+
+#### Shadowstep
 
 Type: Melee Attack
 
-Action: Step into shadows if you are out of shadows. Otherwise step out of shadows and deal significant weapon damage to your target.
+Action: Gain Stealth.
 
-Passive: Evade all attacks that target only you while you are cloaked in shadow.
+Effect: Replace Shadowstep with Shadowstrike when you gain Stealth.
 
 Slots: 1
 
+#### Shadowstrike
+
+Action: Lose Stealth and deal significant weapon damage to your target.
+
+Effect: Replace Shadowstrike with Shadowstep when you lose Stealth.
+
+Slots: None
+
+#### Hungerstrike
+
+Action: Deal minor weapon damage to your target and recover health equal to the inflicted damage. Then take another turn if you are at full health.
+
+Slots: 3
+
 #### Haste
 
-Action: Roll two new actions and activate them.
+Action: Roll two new moves and execute them.
 
-Slots: 4, 5, 6
+Slots: 5, 6
 
-#### Backstab
-
-Action: Step out of shadows and deal massive weapon damage to your target. Then if your target has
-
-#### Leeching Strike
+#### Leeching Bite
 
 Type: Melee Attack, Leeching
 
-Action: Deal moderate damage to your target. Recover health equal to 10% of the inflicted damage.
+Action: Deal moderate damage to your target and recover health equal to 10% of the inflicted damage.
+
+Slots: 2, 3
 
 #### Vampiric Lineage
 
 Type: Leeching
 
-Action:
+Action: Gain Bloodlust for 3 rounds.
 
-Action: Deal moderate damage to your target and recover health equal to 10% of the inflicted damage.
+Effect: Recover health equal to 1% of the inflicted damage when you deal damage to a single target.
 
-Reaction:
+Slots: 3, 4
+
+#### Bloodlust
+
+Effect: Take a new turn when you complete a move with initiative 1.
 
 ### Mage
 
 #### Zap
 
-Action: Deal minor damage to your target.
+Action: Deal minor damage to your target. Then replace Zap with Zap-Zap.
 
 Slots: 1
 
-#### Orb of Protection
+#### Zap-Zap
+
+Action: Deal moderate damage to two targets or deal major damage to a single target. Then replace Zap-Zap with Zap.
+
+Slots: None
+
+#### Power Channel
+
+Type: Arcane
+
+Action: Gain Channeled Power for 1 round.
+
+Slots: 1
+
+##### Channeled Power
+
+Type: Arcane, Effect
+
+Bonuses: +10 Might
+
+Effect: Re-roll all dice with result 1 when you roll for initiative.
+
+#### Silver Orb
 
 Type: Orb
 
@@ -200,15 +254,15 @@ Slots: 2, 3
 
 ##### Orb of Protection
 
+Type: Orb, Effect
+
+Effect: Soak 25% of incoming damage.
+
+#### Red Orb
+
 Type: Orb
 
-Reaction: Soak 25% of incoming damage.
-
-#### Orb of Fire
-
-Type: Orb
-
-Action: Gain an Orb of Fire for 3 rounds.
+Action: Gain an Orb of Fire effect for 3 rounds.
 
 Slots: 3, 4
 
@@ -216,24 +270,40 @@ Slots: 3, 4
 
 Type: Orb
 
-Reaction: Deal moderate damage to the attacker when targeted by a Melee action.
+Effect: Deal moderate damage to the attacker when targeted by a Melee move.
+
+#### Blue Orb
+
+Type: Orb
+
+Action: Gain an Orb of Water for 3 rounds.
+
+Slots: 3, 4
+
+##### Orb of Water
+
+Type: Orb
+
+Effect: Remove all Fire and Bleeding conditions from yourself and recover 1% of your health pool at the end of your turn.
+
+#### Arcane Blast
+
+Type: Arcane
+
+Action: Deal moderate damage to all targets around you. Then gain Arcane Brilliance for 1 round.
+
+Slots: 4, 5
+
+##### Arcane Brilliance
+
+Effect: Re-roll all dice that is not the highest result when you roll for initiative.
 
 #### Orb of Many Colors
 
 Type: Orb
 
-Action: Activate all your other Orb actions.
+Action: Activate all your other Orb moves.
 
-Reaction: Recover 1% of your health when you gain an Orb.
+Effect: Recover 1% of your health pool when you gain an Orb.
 
-Slots: 6
-
-
-
-
-
-
-
-
-
-
+Slots: 5, 6
